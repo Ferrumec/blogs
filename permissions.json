@@ -1,0 +1,18 @@
+{
+  "permissions": [
+    { "method": "POST",   "url": "/blogs/posts",                    "bit_id": 0 },
+    { "method": "PUT",    "url": "/blogs/posts/{id}",               "bit_id": 1 },
+    { "method": "PATCH",  "url": "/blogs/posts/{id}",               "bit_id": 1 },
+    { "method": "DELETE", "url": "/blogs/posts/{id}",               "bit_id": 2 },
+    { "method": "POST",   "url": "/blogs/posts/{id}/publish",       "bit_id": 3 },
+    { "method": "POST",   "url": "/blogs/posts/{id}/unpublish",     "bit_id": 3 },
+    { "method": "GET",    "url": "/blogs/me/posts",                 "bit_id": 4 },
+    { "method": "GET",    "url": "/blogs/me/posts/{id}",            "bit_id": 4 },
+    { "method": "POST",   "url": "/blogs/categories",               "bit_id": 5 },
+    { "method": "PUT",    "url": "/blogs/categories/{id}",          "bit_id": 5 },
+    { "method": "PATCH",  "url": "/blogs/categories/{id}",          "bit_id": 5 },
+    { "method": "DELETE", "url": "/blogs/categories/{id}",          "bit_id": 5 },
+    { "method": "POST",   "url": "/blogs/posts/{post_id}/comments", "bit_id": 6 },
+    { "method": "DELETE", "url": "/blogs/comments/{id}",            "bit_id": 7 }
+  ]
+}

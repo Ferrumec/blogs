@@ -1,0 +1,24 @@
+[package]
+name = "blogs"
+version = "0.1.0"
+edition = "2024"
+description = "Ferrumec blogs microservice: posts, categories and comments built on ferrumec + viewset"
+license = "MIT"
+
+[dependencies]
+ferrumec = { version = "0.4.2", features = ["launch", "pg"] }
+viewset = { version = "0.6.1", features = ["web"] }
+actix-web = "4"
+async-trait = "0.1"
+chrono = { version = "0.4", features = ["serde"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+sqlx = { version = "0.9", features = ["postgres", "uuid", "chrono"] }
+tokio = { version = "1", features = ["rt-multi-thread", "macros"] }
+tracing = "0.1"
+uuid = { version = "1", features = ["serde", "v4"] }
+
+# To build against the local copies you uploaded instead of crates.io:
+# [patch.crates-io]
+# ferrumec = { path = "../src/ferrumec" }
+# viewset = { path = "../src/viewset" }
