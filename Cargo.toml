@@ -21,4 +21,4 @@ uuid = { version = "1", features = ["serde", "v4"] }
 # To build against the local copies you uploaded instead of crates.io:
 # [patch.crates-io]
 # ferrumec = { path = "../src/ferrumec" }
- viewset = { path = "../viewset" }
+ viewset ="0.6"
