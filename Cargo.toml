@@ -6,8 +6,8 @@ description = "Ferrumec blogs microservice: posts, categories and comments built
 license = "MIT"
 
 [dependencies]
-ferrumec = { version = "0.4.2", features = ["web", "pg"] }
-viewset = { version = "0.6.1", features = ["web"] }
+ferrumec = { version = "0.4", features = ["web", "pg"] }
+#viewset = { version = "0.6.1", features = ["web"] }
 actix-web = "4"
 async-trait = "0.1"
 chrono = { version = "0.4", features = ["serde"] }
@@ -21,4 +21,4 @@ uuid = { version = "1", features = ["serde", "v4"] }
 # To build against the local copies you uploaded instead of crates.io:
 # [patch.crates-io]
 # ferrumec = { path = "../src/ferrumec" }
-# viewset = { path = "../src/viewset" }
+ viewset = { path = "../viewset" }

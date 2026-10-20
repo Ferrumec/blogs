@@ -368,49 +368,45 @@ impl PostViewSet {
 
     async fn create(
         self: Arc<Self>,
-        req: HttpRequest,
+        caller: viewset::web::Identity,
         body: web::Json<CreatePost>,
     ) -> actix_web::Result<HttpResponse> {
-        let caller = authority(&req)?;
+        
         let mut dto = body.into_inner();
-        dto.author_id = caller.user;
+        dto.author_id = caller.sub;
         let post = self.service.create(dto).await?;
         Ok(HttpResponse::Created().json(post))
     }
 
     async fn update(
         self: Arc<Self>,
-        req: HttpRequest,
+        caller: viewset::web::Identity,
         id: web::Path<String>,
         body: web::Json<UpdatePost>,
     ) -> actix_web::Result<HttpResponse> {
-        let caller = authority(&req)?;
         let id = parse_uuid(&id)?;
         let existing = self.service.retrieve(id).await?;
-        ensure_owner_or_admin(&caller, existing.author_id)?;
         let post = self.service.update(id, body.into_inner()).await?;
         Ok(HttpResponse::Ok().json(post))
     }
 
-    async fn delete(self: Arc<Self>, req: HttpRequest, id: web::Path<String>) -> actix_web::Result<HttpResponse> {
-        let caller = authority(&req)?;
+    async fn delete(self: Arc<Self>, caller: viewset::web::Identity, id: web::Path<String>) -> actix_web::Result<HttpResponse> {
+        
         let id = parse_uuid(&id)?;
         let existing = self.service.retrieve(id).await?;
-        ensure_owner_or_admin(&caller, existing.author_id)?;
         self.service.delete(id).await?;
         Ok(HttpResponse::NoContent().finish())
     }
 
     async fn change_status(
         self: Arc<Self>,
-        req: HttpRequest,
+        caller: viewset::web::Identity,
         id: web::Path<String>,
         status: &'static str,
     ) -> actix_web::Result<HttpResponse> {
-        let caller = authority(&req)?;
+        
         let id = parse_uuid(&id)?;
         let existing = self.service.retrieve(id).await?;
-        ensure_owner_or_admin(&caller, existing.author_id)?;
         if existing.status == status {
             // Already there: no write and no duplicate event.
             return Ok(HttpResponse::Ok().json(existing));
@@ -422,14 +418,14 @@ impl PostViewSet {
     /// The caller's own posts, drafts included.
     async fn list_mine(
         self: Arc<Self>,
-        req: HttpRequest,
+        caller: viewset::web::Identity,
         q: web::Query<Filters>,
     ) -> actix_web::Result<HttpResponse> {
-        let caller = authority(&req)?;
+        
         let page = list_where_uuid::<Post>(
             self.db(),
             "author_id",
-            caller.user,
+            caller.sub,
             None,
             "created_at DESC",
             &q,
@@ -441,12 +437,12 @@ impl PostViewSet {
 
     async fn retrieve_mine(
         self: Arc<Self>,
-        req: HttpRequest,
+        caller: viewset::web::Identity,
         id: web::Path<String>,
     ) -> actix_web::Result<HttpResponse> {
-        let caller = authority(&req)?;
+        
         let post = self.service.retrieve(parse_uuid(&id)?).await?;
-        if post.author_id != caller.user {
+        if post.author_id != caller.sub {
             return Err(ApiError::NotFound.into());
         }
         Ok(HttpResponse::Ok().json(post))
@@ -489,7 +485,7 @@ impl ViewSet for PostViewSet {
                 }))
                 .route(web::post().to({
                     let vs = vs.clone();
-                    move |req: HttpRequest, body: web::Json<CreatePost>| vs.clone().create(req, body)
+                    move |req: viewset::web::Identity, body: web::Json<CreatePost>| vs.clone().create(req, body)
                 })),
         );
 
@@ -506,38 +502,38 @@ impl ViewSet for PostViewSet {
                 }))
                 .route(web::put().to({
                     let vs = vs.clone();
-                    move |req: HttpRequest, id: web::Path<String>, body: web::Json<UpdatePost>| {
+                    move |req: viewset::web::Identity, id: web::Path<String>, body: web::Json<UpdatePost>| {
                         vs.clone().update(req, id, body)
                     }
                 }))
                 .route(web::patch().to({
                     let vs = vs.clone();
-                    move |req: HttpRequest, id: web::Path<String>, body: web::Json<UpdatePost>| {
+                    move |req: viewset::web::Identity, id: web::Path<String>, body: web::Json<UpdatePost>| {
                         vs.clone().update(req, id, body)
                     }
                 }))
                 .route(web::delete().to({
                     let vs = vs.clone();
-                    move |req: HttpRequest, id: web::Path<String>| vs.clone().delete(req, id)
+                    move |req: viewset::web::Identity, id: web::Path<String>| vs.clone().delete(req, id)
                 })),
         );
 
         cfg.service(web::resource(format!("{path}/{{id}}/publish")).route(web::post().to({
             let vs = vs.clone();
-            move |req: HttpRequest, id: web::Path<String>| vs.clone().change_status(req, id, PUBLISHED)
+            move |req: viewset::web::Identity, id: web::Path<String>| vs.clone().change_status(req, id, PUBLISHED)
         })));
         cfg.service(web::resource(format!("{path}/{{id}}/unpublish")).route(web::post().to({
             let vs = vs.clone();
-            move |req: HttpRequest, id: web::Path<String>| vs.clone().change_status(req, id, DRAFT)
+            move |req: viewset::web::Identity, id: web::Path<String>| vs.clone().change_status(req, id, DRAFT)
         })));
 
         cfg.service(web::resource("/me/posts").route(web::get().to({
             let vs = vs.clone();
-            move |req: HttpRequest, q: web::Query<Filters>| vs.clone().list_mine(req, q)
+            move |req: viewset::web::Identity, q: web::Query<Filters>| vs.clone().list_mine(req, q)
         })));
         cfg.service(web::resource("/me/posts/{id}").route(web::get().to({
             let vs = vs.clone();
-            move |req: HttpRequest, id: web::Path<String>| vs.clone().retrieve_mine(req, id)
+            move |req: viewset::web::Identity, id: web::Path<String>| vs.clone().retrieve_mine(req, id)
         })));
         cfg.service(web::resource("/categories/{category_id}/posts").route(web::get().to({
             let vs = vs.clone();

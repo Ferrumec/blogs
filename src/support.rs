@@ -25,7 +25,7 @@ pub fn authority(req: &HttpRequest) -> ApiResult<Authority> {
     req.extensions()
         .get::<Authority>()
         .cloned()
-        .ok_or(ApiError::Unauthorized)
+        .ok_or(ApiError::Forbidden)
 }
 
 pub fn is_admin(a: &Authority) -> bool {
