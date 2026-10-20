@@ -426,10 +426,17 @@ impl PostViewSet {
 
     async fn delete(
         self: Arc<Self>,
-        _caller: viewset::web::Identity,
-        id: web::Path<String>,
+        caller: viewset::web::Identity,
+        id: web::Path<uuid::Uuid>,
     ) -> actix_web::Result<HttpResponse> {
-        let id = parse_uuid(&id)?;
+        let author_id = caller.sub;
+        let id = id.into_inner();
+        if let Err(e) = self.service.repo.list_one(viewset::filters!(author_id,id)).await{
+            match e {
+                sqlx::Error::RowNotFound => return Err(actix_web::error::ErrorForbidden("Not Allowed")),
+                _ => return Err(actix_web::error::ErrorInternalServerError("Server error")),
+            }
+        };
         self.service.delete(id).await?;
         Ok(HttpResponse::NoContent().finish())
     }
@@ -583,7 +590,7 @@ impl ViewSet for PostViewSet {
                     "/{id}",
                     web::delete().to({
                         let vs = vs.clone();
-                        move |req: viewset::web::Identity, id: web::Path<String>| {
+                        move |req: viewset::web::Identity, id: web::Path<uuid::Uuid>| {
                             vs.clone().delete(req, id)
                         }
                     }),
