@@ -28,11 +28,14 @@ impl Module for BlogsModule {
         let outbox = Arc::new(Outbox::new(db.clone(), infra.event_stream()).await?);
         let cache = infra.cache_factory();
 
-        let categories = DefaultViewSet(CategoryService::new(BlogRepo::new(db.clone(), cache.clone())));
+        let categories = DefaultViewSet(CategoryService::new(BlogRepo::new(
+            db.clone(),
+            cache.clone(),
+        )));
         let posts = PostViewSet::new(PostService::new(
             BlogRepo::new(db.clone(), cache.clone()),
             outbox.clone(),
-        ));
+        ),cache.clone());
         let comments = CommentViewSet::new(CommentService::new(
             BlogRepo::new(db.clone(), cache),
             outbox.clone(),
@@ -48,14 +51,12 @@ impl Module for BlogsModule {
 
     fn configure(self: Arc<Self>, service_conf: &mut web::ServiceConfig, namespace: &str) {
         let this = self.clone();
-        service_conf.service(
-            web::scope(&format!("/{namespace}")).configure(move |cfg| {
-                this.categories.clone().configure(cfg, "/categories");
-                // Posts before comments: `/posts/by-slug/{slug}` must be
-                // registered ahead of `/posts/{post_id}/comments`.
-                this.posts.clone().configure(cfg, "/posts");
-                this.comments.clone().configure(cfg, "/comments");
-            }),
-        );
+        service_conf.service(web::scope(&format!("/{namespace}")).configure(move |cfg| {
+            this.categories.clone().configure(cfg, "/categories");
+            // Posts before comments: `/posts/by-slug/{slug}` must be
+            // registered ahead of `/posts/{post_id}/comments`.
+            this.posts.clone().configure(cfg, "/posts");
+            this.comments.clone().configure(cfg, "/comments");
+        }));
     }
 }

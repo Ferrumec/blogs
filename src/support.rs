@@ -3,8 +3,8 @@
 //! cannot express.
 
 use actix_web::{HttpMessage, HttpRequest};
-use ferrumec::cache::{CacheFactory, Store};
 use ferrumec::Authority;
+use ferrumec::cache::{CacheFactory, Store};
 use serde::de::DeserializeOwned;
 use sqlx::PgPool;
 use std::sync::Arc;
@@ -112,7 +112,8 @@ impl<E: Entity + DeserializeOwned> BlogRepo<E> {
     pub fn new(db: PgPool, cache_factory: impl CacheFactory) -> Self {
         Self {
             db,
-            cache: cache_factory.new_cache(&format!("{}_items", E::TABLE), Duration::from_secs(300)),
+            cache: cache_factory
+                .new_cache(&format!("{}_items", E::TABLE), Duration::from_secs(300)),
         }
     }
 }
@@ -224,9 +225,16 @@ mod tests {
 
     #[test]
     fn admin_bit() {
-        let a = Authority { user: Uuid::nil(), namespace: Uuid::nil(), role: 1u128 << ADMIN_BIT };
+        let a = Authority {
+            user: Uuid::nil(),
+            namespace: Uuid::nil(),
+            role: 1u128 << ADMIN_BIT,
+        };
         assert!(is_admin(&a));
-        let b = Authority { role: 0b1111, ..a.clone() };
+        let b = Authority {
+            role: 0b1111,
+            ..a.clone()
+        };
         assert!(!is_admin(&b));
     }
 }

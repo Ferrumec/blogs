@@ -57,8 +57,15 @@ impl Entity for Comment {
     type ResponseDto = Comment;
 
     const TABLE: &'static str = "blog_comments";
-    const COLUMNS: &'static [&'static str] =
-        &["id", "post_id", "author_id", "parent_id", "body", "created_at", "deleted_at"];
+    const COLUMNS: &'static [&'static str] = &[
+        "id",
+        "post_id",
+        "author_id",
+        "parent_id",
+        "body",
+        "created_at",
+        "deleted_at",
+    ];
     const SORTABLE: &'static [&'static str] = &["created_at"];
     const SOFT_DELETE_COLUMN: Option<&'static str> = Some("deleted_at");
 
@@ -221,7 +228,11 @@ impl CommentViewSet {
         Ok(HttpResponse::Ok().json(comment))
     }
 
-    async fn delete(self: Arc<Self>, req: HttpRequest, id: web::Path<String>) -> actix_web::Result<HttpResponse> {
+    async fn delete(
+        self: Arc<Self>,
+        req: HttpRequest,
+        id: web::Path<String>,
+    ) -> actix_web::Result<HttpResponse> {
         let caller = authority(&req)?;
         let id = parse_uuid(&id)?;
         let existing = self.service.retrieve(id).await?;
@@ -246,11 +257,15 @@ impl ViewSet for CommentViewSet {
             web::resource("/posts/{post_id}/comments")
                 .route(web::get().to({
                     let vs = vs.clone();
-                    move |pid: web::Path<String>, q: web::Query<Filters>| vs.clone().list_for_post(pid, q)
+                    move |pid: web::Path<String>, q: web::Query<Filters>| {
+                        vs.clone().list_for_post(pid, q)
+                    }
                 }))
                 .route(web::post().to({
                     let vs = vs.clone();
-                    move |req: HttpRequest, pid: web::Path<String>, body: web::Json<CreateComment>| {
+                    move |req: HttpRequest,
+                          pid: web::Path<String>,
+                          body: web::Json<CreateComment>| {
                         vs.clone().create(req, pid, body)
                     }
                 })),

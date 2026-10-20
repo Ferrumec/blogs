@@ -132,7 +132,9 @@ impl Service for CategoryService {
             return Err(ApiError::Validation("invalid `slug`".into()));
         }
         if slug_taken(tx, &slug, None).await? {
-            return Err(ApiError::Conflict(format!("slug `{slug}` is already in use")));
+            return Err(ApiError::Conflict(format!(
+                "slug `{slug}` is already in use"
+            )));
         }
         dto.slug = Some(slug);
         Ok(dto)
@@ -152,7 +154,9 @@ impl Service for CategoryService {
                 return Err(ApiError::Validation("invalid `slug`".into()));
             }
             if slug_taken(tx, slug, Some(*id)).await? {
-                return Err(ApiError::Conflict(format!("slug `{slug}` is already in use")));
+                return Err(ApiError::Conflict(format!(
+                    "slug `{slug}` is already in use"
+                )));
             }
         }
         Ok(dto)

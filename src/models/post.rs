@@ -1,9 +1,9 @@
 use crate::events::{PRODUCER, PostDeleted, PostPublished, PostUnpublished};
 use crate::support::{
-    ApiResult, BlogRepo, authority, ensure_owner_or_admin, internal, list_where_uuid, parse_uuid,
+    ApiResult, BlogRepo, internal, list_where_uuid, parse_uuid,
     require_text, slugify, valid_slug,
 };
-use actix_web::{HttpRequest, HttpResponse, web};
+use actix_web::{HttpResponse, web};
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
 use ferrumec::Event;
@@ -87,11 +87,22 @@ impl Entity for Post {
 
     const TABLE: &'static str = "blog_posts";
     const COLUMNS: &'static [&'static str] = &[
-        "id", "author_id", "category_id", "title", "slug", "excerpt", "body", "status",
-        "published_at", "created_at", "updated_at", "deleted_at",
+        "id",
+        "author_id",
+        "category_id",
+        "title",
+        "slug",
+        "excerpt",
+        "body",
+        "status",
+        "published_at",
+        "created_at",
+        "updated_at",
+        "deleted_at",
     ];
     const SEARCHABLE: &'static [&'static str] = &["title", "excerpt", "body"];
-    const SORTABLE: &'static [&'static str] = &["created_at", "published_at", "updated_at", "title"];
+    const SORTABLE: &'static [&'static str] =
+        &["created_at", "published_at", "updated_at", "title"];
     // Only text columns: viewset binds filter values as TEXT, which Postgres
     // will not compare to UUID columns (see the /me and /categories routes).
     const FILTERABLE: &'static [&'static str] = &["slug", "status"];
@@ -198,9 +209,13 @@ impl PostService {
         };
         let post = self.repo.update_in_tx(&mut tx, &id, dto).await?;
         if status == PUBLISHED {
-            self.push(&mut tx, Self::published_event(&post), post.author_id).await?;
+            self.push(&mut tx, Self::published_event(&post), post.author_id)
+                .await?;
         } else {
-            let ev = PostUnpublished { post_id: post.id, author_id: post.author_id };
+            let ev = PostUnpublished {
+                post_id: post.id,
+                author_id: post.author_id,
+            };
             self.push(&mut tx, ev, post.author_id).await?;
         }
         tx.commit().await?;
@@ -226,10 +241,12 @@ async fn slug_taken(
 }
 
 async fn category_exists(tx: &mut Transaction<'_, Postgres>, id: Uuid) -> ApiResult<bool> {
-    Ok(sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM blog_categories WHERE id = $1)")
-        .bind(id)
-        .fetch_one(&mut **tx)
-        .await?)
+    Ok(
+        sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM blog_categories WHERE id = $1)")
+            .bind(id)
+            .fetch_one(&mut **tx)
+            .await?,
+    )
 }
 
 #[async_trait]
@@ -248,7 +265,9 @@ impl Service for PostService {
         require_text("title", &dto.title, 200)?;
         require_text("body", &dto.body, 200_000)?;
         if dto.status != DRAFT && dto.status != PUBLISHED {
-            return Err(ApiError::Validation("`status` must be `draft` or `published`".into()));
+            return Err(ApiError::Validation(
+                "`status` must be `draft` or `published`".into(),
+            ));
         }
         if let Some(cat) = dto.category_id {
             if !category_exists(tx, cat).await? {
@@ -261,7 +280,9 @@ impl Service for PostService {
                     return Err(ApiError::Validation("invalid `slug`".into()));
                 }
                 if slug_taken(tx, &slug, None).await? {
-                    return Err(ApiError::Conflict(format!("slug `{slug}` is already in use")));
+                    return Err(ApiError::Conflict(format!(
+                        "slug `{slug}` is already in use"
+                    )));
                 }
                 dto.slug = Some(slug);
             }
@@ -279,9 +300,14 @@ impl Service for PostService {
         Ok(dto)
     }
 
-    async fn after_create(&self, tx: &mut Transaction<'_, Postgres>, post: Post) -> ApiResult<Post> {
+    async fn after_create(
+        &self,
+        tx: &mut Transaction<'_, Postgres>,
+        post: Post,
+    ) -> ApiResult<Post> {
         if post.status == PUBLISHED {
-            self.push(tx, Self::published_event(&post), post.author_id).await?;
+            self.push(tx, Self::published_event(&post), post.author_id)
+                .await?;
         }
         Ok(post)
     }
@@ -308,7 +334,9 @@ impl Service for PostService {
                 return Err(ApiError::Validation("invalid `slug`".into()));
             }
             if slug_taken(tx, slug, Some(*id)).await? {
-                return Err(ApiError::Conflict(format!("slug `{slug}` is already in use")));
+                return Err(ApiError::Conflict(format!(
+                    "slug `{slug}` is already in use"
+                )));
             }
         }
         Ok(dto)
@@ -325,11 +353,13 @@ impl Service for PostService {
 
 pub struct PostViewSet {
     service: PostService,
+    middleware: Arc<viewset::web::SessionMiddleware>,
 }
 
 impl PostViewSet {
-    pub fn new(service: PostService) -> Self {
-        Self { service }
+    pub fn new(service: PostService,cache: impl ferrumec::CacheFactory) -> Self {
+        let middleware = Arc::new(viewset::web::SessionMiddleware::new(cache));
+        Self { service, middleware}
     }
 
     fn db(&self) -> &sqlx::PgPool {
@@ -337,7 +367,10 @@ impl PostViewSet {
     }
 
     /// Public feed: published posts only, newest first.
-    async fn list_public(self: Arc<Self>, q: web::Query<Filters>) -> actix_web::Result<HttpResponse> {
+    async fn list_public(
+        self: Arc<Self>,
+        q: web::Query<Filters>,
+    ) -> actix_web::Result<HttpResponse> {
         let mut q = q.into_inner();
         q.insert("status".into(), PUBLISHED.into());
         let page = self.service.list(q).await?;
@@ -358,7 +391,10 @@ impl PostViewSet {
     }
 
     /// A single post by id; drafts and archived posts are not public.
-    async fn retrieve_public(self: Arc<Self>, id: web::Path<String>) -> actix_web::Result<HttpResponse> {
+    async fn retrieve_public(
+        self: Arc<Self>,
+        id: web::Path<String>,
+    ) -> actix_web::Result<HttpResponse> {
         let post = self.service.retrieve(parse_uuid(&id)?).await?;
         if post.status != PUBLISHED {
             return Err(ApiError::NotFound.into());
@@ -371,7 +407,6 @@ impl PostViewSet {
         caller: viewset::web::Identity,
         body: web::Json<CreatePost>,
     ) -> actix_web::Result<HttpResponse> {
-        
         let mut dto = body.into_inner();
         dto.author_id = caller.sub;
         let post = self.service.create(dto).await?;
@@ -380,31 +415,31 @@ impl PostViewSet {
 
     async fn update(
         self: Arc<Self>,
-        caller: viewset::web::Identity,
+        _caller: viewset::web::Identity,
         id: web::Path<String>,
         body: web::Json<UpdatePost>,
     ) -> actix_web::Result<HttpResponse> {
         let id = parse_uuid(&id)?;
-        let existing = self.service.retrieve(id).await?;
         let post = self.service.update(id, body.into_inner()).await?;
         Ok(HttpResponse::Ok().json(post))
     }
 
-    async fn delete(self: Arc<Self>, caller: viewset::web::Identity, id: web::Path<String>) -> actix_web::Result<HttpResponse> {
-        
+    async fn delete(
+        self: Arc<Self>,
+        _caller: viewset::web::Identity,
+        id: web::Path<String>,
+    ) -> actix_web::Result<HttpResponse> {
         let id = parse_uuid(&id)?;
-        let existing = self.service.retrieve(id).await?;
         self.service.delete(id).await?;
         Ok(HttpResponse::NoContent().finish())
     }
 
     async fn change_status(
         self: Arc<Self>,
-        caller: viewset::web::Identity,
+        _caller: viewset::web::Identity,
         id: web::Path<String>,
         status: &'static str,
     ) -> actix_web::Result<HttpResponse> {
-        
         let id = parse_uuid(&id)?;
         let existing = self.service.retrieve(id).await?;
         if existing.status == status {
@@ -421,7 +456,6 @@ impl PostViewSet {
         caller: viewset::web::Identity,
         q: web::Query<Filters>,
     ) -> actix_web::Result<HttpResponse> {
-        
         let page = list_where_uuid::<Post>(
             self.db(),
             "author_id",
@@ -440,7 +474,6 @@ impl PostViewSet {
         caller: viewset::web::Identity,
         id: web::Path<String>,
     ) -> actix_web::Result<HttpResponse> {
-        
         let post = self.service.retrieve(parse_uuid(&id)?).await?;
         if post.author_id != caller.sub {
             return Err(ApiError::NotFound.into());
@@ -477,68 +510,127 @@ impl ViewSet for PostViewSet {
     fn configure(self: Arc<Self>, cfg: &mut web::ServiceConfig, path: &str) {
         // Registration order matters: literal segments before `{id}`.
         let vs = self.clone();
-        cfg.service(
-            web::resource(path)
-                .route(web::get().to({
-                    let vs = vs.clone();
-                    move |q: web::Query<Filters>| vs.clone().list_public(q)
-                }))
-                .route(web::post().to({
-                    let vs = vs.clone();
-                    move |req: viewset::web::Identity, body: web::Json<CreatePost>| vs.clone().create(req, body)
-                })),
-        );
 
-        cfg.service(web::resource(format!("{path}/by-slug/{{slug}}")).route(web::get().to({
+        // Public endpoints: no Identity extractor.
+        cfg.service(web::resource(path).route(web::get().to({
             let vs = vs.clone();
-            move |slug: web::Path<String>| vs.clone().by_slug(slug)
+            move |q: web::Query<Filters>| vs.clone().list_public(q)
         })));
 
         cfg.service(
-            web::resource(format!("{path}/{{id}}"))
-                .route(web::get().to({
-                    let vs = vs.clone();
-                    move |id: web::Path<String>| vs.clone().retrieve_public(id)
-                }))
-                .route(web::put().to({
-                    let vs = vs.clone();
-                    move |req: viewset::web::Identity, id: web::Path<String>, body: web::Json<UpdatePost>| {
-                        vs.clone().update(req, id, body)
-                    }
-                }))
-                .route(web::patch().to({
-                    let vs = vs.clone();
-                    move |req: viewset::web::Identity, id: web::Path<String>, body: web::Json<UpdatePost>| {
-                        vs.clone().update(req, id, body)
-                    }
-                }))
-                .route(web::delete().to({
-                    let vs = vs.clone();
-                    move |req: viewset::web::Identity, id: web::Path<String>| vs.clone().delete(req, id)
-                })),
+            web::resource(format!("{path}/by-slug/{{slug}}")).route(web::get().to({
+                let vs = vs.clone();
+                move |slug: web::Path<String>| vs.clone().by_slug(slug)
+            })),
         );
 
-        cfg.service(web::resource(format!("{path}/{{id}}/publish")).route(web::post().to({
-            let vs = vs.clone();
-            move |req: viewset::web::Identity, id: web::Path<String>| vs.clone().change_status(req, id, PUBLISHED)
-        })));
-        cfg.service(web::resource(format!("{path}/{{id}}/unpublish")).route(web::post().to({
-            let vs = vs.clone();
-            move |req: viewset::web::Identity, id: web::Path<String>| vs.clone().change_status(req, id, DRAFT)
-        })));
+        cfg.service(
+            web::resource(format!("{path}/{{id}}")).route(web::get().to({
+                let vs = vs.clone();
+                move |id: web::Path<String>| vs.clone().retrieve_public(id)
+            })),
+        );
 
-        cfg.service(web::resource("/me/posts").route(web::get().to({
-            let vs = vs.clone();
-            move |req: viewset::web::Identity, q: web::Query<Filters>| vs.clone().list_mine(req, q)
-        })));
-        cfg.service(web::resource("/me/posts/{id}").route(web::get().to({
-            let vs = vs.clone();
-            move |req: viewset::web::Identity, id: web::Path<String>| vs.clone().retrieve_mine(req, id)
-        })));
-        cfg.service(web::resource("/categories/{category_id}/posts").route(web::get().to({
-            let vs = vs.clone();
-            move |cid: web::Path<String>, q: web::Query<Filters>| vs.clone().list_by_category(cid, q)
-        })));
+        cfg.service(
+            web::resource(format!("{path}/categories/{{category_id}}/posts")).route(web::get().to(
+                {
+                    let vs = vs.clone();
+                    move |cid: web::Path<String>, q: web::Query<Filters>| {
+                        vs.clone().list_by_category(cid, q)
+                    }
+                },
+            )),
+        );
+
+        // Authenticated endpoints: grouped under one scope.
+        let vs = self.clone();
+
+        cfg.service(
+            web::scope(path)
+                .wrap(self.middleware.clone())
+                .route(
+                    "",
+                    web::post().to({
+                        let vs = vs.clone();
+                        move |req: viewset::web::Identity, body: web::Json<CreatePost>| {
+                            vs.clone().create(req, body)
+                        }
+                    }),
+                )
+                .route(
+                    "/{id}",
+                    web::put().to({
+                        let vs = vs.clone();
+                        move |req: viewset::web::Identity,
+                              id: web::Path<String>,
+                              body: web::Json<UpdatePost>| {
+                            vs.clone().update(req, id, body)
+                        }
+                    }),
+                )
+                .route(
+                    "/{id}",
+                    web::patch().to({
+                        let vs = vs.clone();
+                        move |req: viewset::web::Identity,
+                              id: web::Path<String>,
+                              body: web::Json<UpdatePost>| {
+                            vs.clone().update(req, id, body)
+                        }
+                    }),
+                )
+                .route(
+                    "/{id}",
+                    web::delete().to({
+                        let vs = vs.clone();
+                        move |req: viewset::web::Identity, id: web::Path<String>| {
+                            vs.clone().delete(req, id)
+                        }
+                    }),
+                )
+                .route(
+                    "/{id}/publish",
+                    web::post().to({
+                        let vs = vs.clone();
+                        move |req: viewset::web::Identity, id: web::Path<String>| {
+                            vs.clone().change_status(req, id, PUBLISHED)
+                        }
+                    }),
+                )
+                .route(
+                    "/{id}/unpublish",
+                    web::post().to({
+                        let vs = vs.clone();
+                        move |req: viewset::web::Identity, id: web::Path<String>| {
+                            vs.clone().change_status(req, id, DRAFT)
+                        }
+                    }),
+                ),
+        );
+
+        // Authenticated endpoints with paths outside the main `path` prefix.
+        cfg.service(
+            web::scope("")
+                .wrap(self.middleware.clone())
+                .route(
+                    "/me/posts",
+                    web::get().to({
+                        let vs = vs.clone();
+                        move |req: viewset::web::Identity, q: web::Query<Filters>| {
+                            vs.clone().list_mine(req, q)
+                        }
+                    }),
+                )
+                .route(
+                    "/me/posts/{id}",
+                    web::get().to({
+                        let vs = vs.clone();
+                        move |req: viewset::web::Identity, id: web::Path<String>| {
+                            vs.clone().retrieve_mine(req, id)
+                        }
+                    }),
+                ),
+        );
     }
 }
 
