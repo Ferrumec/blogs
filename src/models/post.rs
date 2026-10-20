@@ -366,6 +366,17 @@ impl PostViewSet {
         self.service.repository().database()
     }
 
+    /// 404 if the post does not exist, 403 if `caller` is not its author.
+    /// (Filtering via `list_one(filters!(..))` binds values as TEXT, which
+    /// Postgres will not compare to UUID columns, so this loads the row.)
+    async fn ensure_author(&self, id: Uuid, caller: Uuid) -> ApiResult<()> {
+        let post = self.service.retrieve(id).await?;
+        if post.author_id != caller {
+            return Err(ApiError::Forbidden);
+        }
+        Ok(())
+    }
+
     /// Public feed: published posts only, newest first.
     async fn list_public(
         self: Arc<Self>,
@@ -415,11 +426,12 @@ impl PostViewSet {
 
     async fn update(
         self: Arc<Self>,
-        _caller: viewset::web::Identity,
+        caller: viewset::web::Identity,
         id: web::Path<String>,
         body: web::Json<UpdatePost>,
     ) -> actix_web::Result<HttpResponse> {
         let id = parse_uuid(&id)?;
+        self.ensure_author(id, caller.sub).await?;
         let post = self.service.update(id, body.into_inner()).await?;
         Ok(HttpResponse::Ok().json(post))
     }
@@ -429,26 +441,23 @@ impl PostViewSet {
         caller: viewset::web::Identity,
         id: web::Path<uuid::Uuid>,
     ) -> actix_web::Result<HttpResponse> {
-        let author_id = caller.sub;
         let id = id.into_inner();
-        if let Err(e) = self.service.repo.list_one(viewset::filters!(author_id,id)).await{
-            match e {
-                sqlx::Error::RowNotFound => return Err(actix_web::error::ErrorForbidden("Not Allowed")),
-                _ => return Err(actix_web::error::ErrorInternalServerError("Server error")),
-            }
-        };
+        self.ensure_author(id, caller.sub).await?;
         self.service.delete(id).await?;
         Ok(HttpResponse::NoContent().finish())
     }
 
     async fn change_status(
         self: Arc<Self>,
-        _caller: viewset::web::Identity,
+        caller: viewset::web::Identity,
         id: web::Path<String>,
         status: &'static str,
     ) -> actix_web::Result<HttpResponse> {
         let id = parse_uuid(&id)?;
         let existing = self.service.retrieve(id).await?;
+        if existing.author_id != caller.sub {
+            return Err(ApiError::Forbidden.into());
+        }
         if existing.status == status {
             // Already there: no write and no duplicate event.
             return Ok(HttpResponse::Ok().json(existing));
@@ -518,42 +527,14 @@ impl ViewSet for PostViewSet {
         // Registration order matters: literal segments before `{id}`.
         let vs = self.clone();
 
-        // Public endpoints: no Identity extractor.
-        cfg.service(web::resource(path).route(web::get().to({
-            let vs = vs.clone();
-            move |q: web::Query<Filters>| vs.clone().list_public(q)
-        })));
-
-        cfg.service(
-            web::resource(format!("{path}/by-slug/{{slug}}")).route(web::get().to({
-                let vs = vs.clone();
-                move |slug: web::Path<String>| vs.clone().by_slug(slug)
-            })),
-        );
-
-        cfg.service(
-            web::resource(format!("{path}/{{id}}")).route(web::get().to({
-                let vs = vs.clone();
-                move |id: web::Path<String>| vs.clone().retrieve_public(id)
-            })),
-        );
-
-        cfg.service(
-            web::resource(format!("{path}/categories/{{category_id}}/posts")).route(web::get().to(
-                {
-                    let vs = vs.clone();
-                    move |cid: web::Path<String>, q: web::Query<Filters>| {
-                        vs.clone().list_by_category(cid, q)
-                    }
-                },
-            )),
-        );
-
-        // Authenticated endpoints: grouped under one scope.
-        let vs = self.clone();
-
+        // Authenticated endpoints. Registered FIRST with a non-GET guard:
+        // actix returns 405 (no fall-through) when the first path match has no
+        // route for the method, so the GET-only public resources below must
+        // never be matched by POST/PUT/PATCH/DELETE. The guard makes this scope
+        // decline GETs so they reach the public resources.
         cfg.service(
             web::scope(path)
+                .guard(actix_web::guard::Not(actix_web::guard::Get()))
                 .wrap(self.middleware.clone())
                 .route(
                     "",
@@ -615,28 +596,59 @@ impl ViewSet for PostViewSet {
                 ),
         );
 
-        // Authenticated endpoints with paths outside the main `path` prefix.
+        // Public endpoints: no Identity extractor.
+        cfg.service(web::resource(path).route(web::get().to({
+            let vs = vs.clone();
+            move |q: web::Query<Filters>| vs.clone().list_public(q)
+        })));
+
         cfg.service(
-            web::scope("")
+            web::resource(format!("{path}/by-slug/{{slug}}")).route(web::get().to({
+                let vs = vs.clone();
+                move |slug: web::Path<String>| vs.clone().by_slug(slug)
+            })),
+        );
+
+        cfg.service(
+            web::resource(format!("{path}/{{id}}")).route(web::get().to({
+                let vs = vs.clone();
+                move |id: web::Path<String>| vs.clone().retrieve_public(id)
+            })),
+        );
+
+        cfg.service(
+            web::resource(format!("{path}/categories/{{category_id}}/posts")).route(web::get().to(
+                {
+                    let vs = vs.clone();
+                    move |cid: web::Path<String>, q: web::Query<Filters>| {
+                        vs.clone().list_by_category(cid, q)
+                    }
+                },
+            )),
+        );
+
+        // Authenticated endpoints with paths outside the main `path` prefix.
+        // Plain resources, not `web::scope("")`: an empty-prefix scope matches
+        // every path and would swallow routes registered after it (comments).
+        cfg.service(
+            web::resource("/me/posts")
                 .wrap(self.middleware.clone())
-                .route(
-                    "/me/posts",
-                    web::get().to({
-                        let vs = vs.clone();
-                        move |req: viewset::web::Identity, q: web::Query<Filters>| {
-                            vs.clone().list_mine(req, q)
-                        }
-                    }),
-                )
-                .route(
-                    "/me/posts/{id}",
-                    web::get().to({
-                        let vs = vs.clone();
-                        move |req: viewset::web::Identity, id: web::Path<String>| {
-                            vs.clone().retrieve_mine(req, id)
-                        }
-                    }),
-                ),
+                .route(web::get().to({
+                    let vs = vs.clone();
+                    move |req: viewset::web::Identity, q: web::Query<Filters>| {
+                        vs.clone().list_mine(req, q)
+                    }
+                })),
+        );
+        cfg.service(
+            web::resource("/me/posts/{id}")
+                .wrap(self.middleware.clone())
+                .route(web::get().to({
+                    let vs = vs.clone();
+                    move |req: viewset::web::Identity, id: web::Path<String>| {
+                        vs.clone().retrieve_mine(req, id)
+                    }
+                })),
         );
     }
 }
