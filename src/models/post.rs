@@ -1,7 +1,7 @@
 use crate::events::{PRODUCER, PostDeleted, PostPublished, PostUnpublished};
+use crate::models::comment::CommentViewSet;
 use crate::support::{
-    ApiResult, BlogRepo, internal, list_where_uuid, parse_uuid,
-    require_text, slugify, valid_slug,
+    ApiResult, BlogRepo, internal, list_where_uuid, parse_uuid, require_text, slugify, valid_slug,
 };
 use actix_web::{HttpResponse, web};
 use async_trait::async_trait;
@@ -353,13 +353,22 @@ impl Service for PostService {
 
 pub struct PostViewSet {
     service: PostService,
+    comments: Arc<CommentViewSet>,
     middleware: Arc<viewset::web::SessionMiddleware>,
 }
 
 impl PostViewSet {
-    pub fn new(service: PostService,cache: impl ferrumec::CacheFactory) -> Self {
+    pub fn new(
+        service: PostService,
+        cache: impl ferrumec::CacheFactory,
+        comments: Arc<CommentViewSet>,
+    ) -> Self {
         let middleware = Arc::new(viewset::web::SessionMiddleware::new(cache));
-        Self { service, middleware}
+        Self {
+            service,
+            middleware,
+            comments,
+        }
     }
 
     fn db(&self) -> &sqlx::PgPool {
@@ -534,63 +543,66 @@ impl ViewSet for PostViewSet {
         // decline GETs so they reach the public resources.
         cfg.service(
             web::scope(path)
-                .guard(actix_web::guard::Not(actix_web::guard::Get()))
                 .wrap(self.middleware.clone())
+                .service(
+                    web::scope("/{id}")
+                        .configure(|cfg| self.comments.clone().configure(cfg, "comments"))
+                        .route(
+                            "",
+                            web::put().to({
+                                let vs = vs.clone();
+                                move |req: viewset::web::Identity,
+                                      id: web::Path<String>,
+                                      body: web::Json<UpdatePost>| {
+                                    vs.clone().update(req, id, body)
+                                }
+                            }),
+                        )
+                        .route(
+                            "",
+                            web::patch().to({
+                                let vs = vs.clone();
+                                move |req: viewset::web::Identity,
+                                      id: web::Path<String>,
+                                      body: web::Json<UpdatePost>| {
+                                    vs.clone().update(req, id, body)
+                                }
+                            }),
+                        )
+                        .route(
+                            "",
+                            web::delete().to({
+                                let vs = vs.clone();
+                                move |req: viewset::web::Identity, id: web::Path<uuid::Uuid>| {
+                                    vs.clone().delete(req, id)
+                                }
+                            }),
+                        )
+                        .route(
+                            "/publish",
+                            web::post().to({
+                                let vs = vs.clone();
+                                move |req: viewset::web::Identity, id: web::Path<String>| {
+                                    vs.clone().change_status(req, id, PUBLISHED)
+                                }
+                            }),
+                        )
+                        .route(
+                            "/unpublish",
+                            web::post().to({
+                                let vs = vs.clone();
+                                move |req: viewset::web::Identity, id: web::Path<String>| {
+                                    vs.clone().change_status(req, id, DRAFT)
+                                }
+                            }),
+                        ),
+                )
                 .route(
                     "",
                     web::post().to({
                         let vs = vs.clone();
                         move |req: viewset::web::Identity, body: web::Json<CreatePost>| {
                             vs.clone().create(req, body)
-                        }
-                    }),
-                )
-                .route(
-                    "/{id}",
-                    web::put().to({
-                        let vs = vs.clone();
-                        move |req: viewset::web::Identity,
-                              id: web::Path<String>,
-                              body: web::Json<UpdatePost>| {
-                            vs.clone().update(req, id, body)
-                        }
-                    }),
-                )
-                .route(
-                    "/{id}",
-                    web::patch().to({
-                        let vs = vs.clone();
-                        move |req: viewset::web::Identity,
-                              id: web::Path<String>,
-                              body: web::Json<UpdatePost>| {
-                            vs.clone().update(req, id, body)
-                        }
-                    }),
-                )
-                .route(
-                    "/{id}",
-                    web::delete().to({
-                        let vs = vs.clone();
-                        move |req: viewset::web::Identity, id: web::Path<uuid::Uuid>| {
-                            vs.clone().delete(req, id)
-                        }
-                    }),
-                )
-                .route(
-                    "/{id}/publish",
-                    web::post().to({
-                        let vs = vs.clone();
-                        move |req: viewset::web::Identity, id: web::Path<String>| {
-                            vs.clone().change_status(req, id, PUBLISHED)
-                        }
-                    }),
-                )
-                .route(
-                    "/{id}/unpublish",
-                    web::post().to({
-                        let vs = vs.clone();
-                        move |req: viewset::web::Identity, id: web::Path<String>| {
-                            vs.clone().change_status(req, id, DRAFT)
                         }
                     }),
                 ),

@@ -1,10 +1,7 @@
 use crate::events::{CommentCreated, PRODUCER};
 use crate::models::post::published_post_author;
-use crate::support::{
-    ApiResult, BlogRepo, authority, ensure_owner_or_admin, internal, list_where_uuid, parse_uuid,
-    require_text,
-};
-use actix_web::{HttpRequest, HttpResponse, web};
+use crate::support::{ApiResult, BlogRepo, internal, list_where_uuid, require_text};
+use actix_web::{HttpResponse, web};
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
 use ferrumec::Event;
@@ -191,15 +188,24 @@ impl CommentViewSet {
         Self { service }
     }
 
+    /// 404 if the comment does not exist, 403 if `caller` is not its author.
+    async fn ensure_owner(&self, id: Uuid, caller: Uuid) -> ApiResult<()> {
+        let comment = self.service.retrieve(id).await?;
+        if comment.author_id != caller {
+            return Err(ApiError::Forbidden);
+        }
+        Ok(())
+    }
+
     async fn list_for_post(
         self: Arc<Self>,
-        post_id: web::Path<String>,
+        post_id: web::Path<Uuid>,
         q: web::Query<Filters>,
     ) -> actix_web::Result<HttpResponse> {
         let page = list_where_uuid::<Comment>(
             self.service.repository().database(),
             "post_id",
-            parse_uuid(&post_id)?,
+            post_id.into_inner(),
             None,
             "created_at ASC",
             &q,
@@ -211,32 +217,33 @@ impl CommentViewSet {
 
     async fn create(
         self: Arc<Self>,
-        req: HttpRequest,
-        post_id: web::Path<String>,
+        caller: viewset::web::Identity,
+        post_id: web::Path<Uuid>,
         body: web::Json<CreateComment>,
     ) -> actix_web::Result<HttpResponse> {
-        let caller = authority(&req)?;
         let mut dto = body.into_inner();
-        dto.post_id = parse_uuid(&post_id)?;
-        dto.author_id = caller.user;
+        dto.post_id = post_id.into_inner();
+        dto.author_id = caller.sub;
         let comment = self.service.create(dto).await?;
         Ok(HttpResponse::Created().json(comment))
     }
 
-    async fn retrieve(self: Arc<Self>, id: web::Path<String>) -> actix_web::Result<HttpResponse> {
-        let comment = self.service.retrieve(parse_uuid(&id)?).await?;
+    async fn retrieve(
+        self: Arc<Self>,
+        id: web::Path<(Uuid, Uuid)>,
+    ) -> actix_web::Result<HttpResponse> {
+        let (_, comment) = id.into_inner();
+        let comment = self.service.retrieve(comment).await?;
         Ok(HttpResponse::Ok().json(comment))
     }
 
     async fn delete(
         self: Arc<Self>,
-        req: HttpRequest,
-        id: web::Path<String>,
+        caller: viewset::web::Identity,
+        id: web::Path<(Uuid, Uuid)>,
     ) -> actix_web::Result<HttpResponse> {
-        let caller = authority(&req)?;
-        let id = parse_uuid(&id)?;
-        let existing = self.service.retrieve(id).await?;
-        ensure_owner_or_admin(&caller, existing.author_id)?;
+        let (_, id) = id.into_inner();
+        self.ensure_owner(id, caller.sub).await?;
         self.service.delete(id).await?;
         Ok(HttpResponse::NoContent().finish())
     }
@@ -254,32 +261,40 @@ impl ViewSet for CommentViewSet {
     fn configure(self: Arc<Self>, cfg: &mut web::ServiceConfig, path: &str) {
         let vs = self.clone();
         cfg.service(
-            web::resource("/posts/{post_id}/comments")
-                .route(web::get().to({
-                    let vs = vs.clone();
-                    move |pid: web::Path<String>, q: web::Query<Filters>| {
-                        vs.clone().list_for_post(pid, q)
-                    }
-                }))
-                .route(web::post().to({
-                    let vs = vs.clone();
-                    move |req: HttpRequest,
-                          pid: web::Path<String>,
-                          body: web::Json<CreateComment>| {
-                        vs.clone().create(req, pid, body)
-                    }
-                })),
-        );
-        cfg.service(
-            web::resource(format!("{path}/{{id}}"))
-                .route(web::get().to({
-                    let vs = vs.clone();
-                    move |id: web::Path<String>| vs.clone().retrieve(id)
-                }))
-                .route(web::delete().to({
-                    let vs = vs.clone();
-                    move |req: HttpRequest, id: web::Path<String>| vs.clone().delete(req, id)
-                })),
+            web::scope(path)
+                .route(
+                    "",
+                    web::get().to({
+                        let vs = vs.clone();
+                        move |pid: web::Path<Uuid>, q: web::Query<Filters>| {
+                            vs.clone().list_for_post(pid, q)
+                        }
+                    }),
+                )
+                .route(
+                    "",
+                    web::post().to({
+                        let vs = vs.clone();
+                        move |caller: viewset::web::Identity,
+                              pid: web::Path<Uuid>,
+                              body: web::Json<CreateComment>| {
+                            vs.clone().create(caller, pid, body)
+                        }
+                    }),
+                )
+                .service(
+                    web::resource("/{comment}")
+                        .route(web::get().to({
+                            let vs = vs.clone();
+                            move |id: web::Path<(Uuid, Uuid)>| vs.clone().retrieve(id)
+                        }))
+                        .route(web::delete().to({
+                            let vs = vs.clone();
+                            move |caller: viewset::web::Identity, id: web::Path<(Uuid, Uuid)>| {
+                                vs.clone().delete(caller, id)
+                            }
+                        })),
+                ),
         );
     }
 }

@@ -13,7 +13,6 @@ use viewset::{DefaultViewSet, ViewSet};
 pub struct BlogsModule {
     categories: Arc<CategoryViewSet>,
     posts: Arc<PostViewSet>,
-    comments: Arc<CommentViewSet>,
     // Dropping the outbox stops its publisher task, so the module owns it.
     _outbox: Arc<Outbox>,
 }
@@ -32,19 +31,19 @@ impl Module for BlogsModule {
             db.clone(),
             cache.clone(),
         )));
-        let posts = PostViewSet::new(PostService::new(
+        let comments = Arc::new(CommentViewSet::new(CommentService::new(
             BlogRepo::new(db.clone(), cache.clone()),
             outbox.clone(),
-        ),cache.clone());
-        let comments = CommentViewSet::new(CommentService::new(
-            BlogRepo::new(db.clone(), cache),
-            outbox.clone(),
-        ));
+        )));
+        let posts = PostViewSet::new(
+            PostService::new(BlogRepo::new(db.clone(), cache.clone()), outbox.clone()),
+            cache,
+            comments,
+        );
 
         Ok(Self {
             categories: Arc::new(categories),
             posts: Arc::new(posts),
-            comments: Arc::new(comments),
             _outbox: outbox,
         })
     }
@@ -53,13 +52,6 @@ impl Module for BlogsModule {
         let this = self.clone();
         service_conf.service(web::scope(&format!("/{namespace}")).configure(move |cfg| {
             this.categories.clone().configure(cfg, "/categories");
-            // Comments BEFORE posts: the posts viewset registers a non-GET
-            // scope at `/posts`, which prefix-matches
-            // `POST /posts/{post_id}/comments` and would answer 404/405
-            // before the comment routes were ever tried.
-            // (`/posts/{id}/comments` has an extra segment, so it cannot
-            // collide with `/posts/by-slug/{slug}` or `/posts/{id}`.)
-            this.comments.clone().configure(cfg, "/comments");
             this.posts.clone().configure(cfg, "/posts");
         }));
     }

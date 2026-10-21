@@ -2,8 +2,6 @@
 //! UUID-column list query that viewset's string-only `?field=value` filters
 //! cannot express.
 
-use actix_web::{HttpMessage, HttpRequest};
-use ferrumec::Authority;
 use ferrumec::cache::{CacheFactory, Store};
 use serde::de::DeserializeOwned;
 use sqlx::PgPool;
@@ -13,33 +11,6 @@ use uuid::Uuid;
 use viewset::{ApiError, Entity, Filters, Page, PaginationParams, Repository};
 
 pub type ApiResult<T> = Result<T, ApiError>;
-
-/// Role bit (`1 << ADMIN_BIT`) that lets a user moderate other people's
-/// content. Route-level bits live in `permissions.json`.
-pub const ADMIN_BIT: u32 = 20;
-
-/// The caller, as put into the request extensions by ferrumec's `Permissions`
-/// middleware. That middleware only runs the lookup for routes listed in
-/// `permissions.json`, so every handler that calls this must be listed there.
-pub fn authority(req: &HttpRequest) -> ApiResult<Authority> {
-    req.extensions()
-        .get::<Authority>()
-        .cloned()
-        .ok_or(ApiError::Forbidden)
-}
-
-pub fn is_admin(a: &Authority) -> bool {
-    a.role & (1u128 << ADMIN_BIT) != 0
-}
-
-/// Owner-or-admin check used by update/delete/publish handlers.
-pub fn ensure_owner_or_admin(a: &Authority, owner: Uuid) -> ApiResult<()> {
-    if a.user == owner || is_admin(a) {
-        Ok(())
-    } else {
-        Err(ApiError::Forbidden)
-    }
-}
 
 pub fn parse_uuid(raw: &str) -> ApiResult<Uuid> {
     Uuid::parse_str(raw).map_err(|_| ApiError::Validation(format!("invalid id: {raw}")))
