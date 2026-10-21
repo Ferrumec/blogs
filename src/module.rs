@@ -53,10 +53,14 @@ impl Module for BlogsModule {
         let this = self.clone();
         service_conf.service(web::scope(&format!("/{namespace}")).configure(move |cfg| {
             this.categories.clone().configure(cfg, "/categories");
-            // Posts before comments: `/posts/by-slug/{slug}` must be
-            // registered ahead of `/posts/{post_id}/comments`.
-            this.posts.clone().configure(cfg, "/posts");
+            // Comments BEFORE posts: the posts viewset registers a non-GET
+            // scope at `/posts`, which prefix-matches
+            // `POST /posts/{post_id}/comments` and would answer 404/405
+            // before the comment routes were ever tried.
+            // (`/posts/{id}/comments` has an extra segment, so it cannot
+            // collide with `/posts/by-slug/{slug}` or `/posts/{id}`.)
             this.comments.clone().configure(cfg, "/comments");
+            this.posts.clone().configure(cfg, "/posts");
         }));
     }
 }
