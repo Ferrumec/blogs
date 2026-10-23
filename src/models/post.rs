@@ -536,11 +536,48 @@ impl ViewSet for PostViewSet {
         // Registration order matters: literal segments before `{id}`.
         let vs = self.clone();
 
-        // Authenticated endpoints. Registered FIRST with a non-GET guard:
-        // actix returns 405 (no fall-through) when the first path match has no
-        // route for the method, so the GET-only public resources below must
-        // never be matched by POST/PUT/PATCH/DELETE. The guard makes this scope
-        // decline GETs so they reach the public resources.
+        // Public endpoints: no Identity extractor.
+        use actix_web::guard;
+
+        cfg.service(
+            web::resource(path)
+                .guard(guard::Get())
+                .route(web::get().to({
+                    let vs = vs.clone();
+                    move |q: web::Query<Filters>| vs.clone().list_public(q)
+                })),
+        );
+
+        cfg.service(
+            web::resource(format!("{path}/by-slug/{{slug}}"))
+                .guard(guard::Get())
+                .route(web::get().to({
+                    let vs = vs.clone();
+                    move |slug: web::Path<String>| vs.clone().by_slug(slug)
+                })),
+        );
+
+        cfg.service(
+            web::resource(format!("{path}/{{id}}"))
+                .guard(guard::Get())
+                .route(web::get().to({
+                    let vs = vs.clone();
+                    move |id: web::Path<String>| vs.clone().retrieve_public(id)
+                })),
+        );
+
+        cfg.service(
+            web::resource(format!("{path}/categories/{{category_id}}/posts"))
+                .guard(guard::Get())
+                .route(web::get().to({
+                    let vs = vs.clone();
+                    move |cid: web::Path<String>, q: web::Query<Filters>| {
+                        vs.clone().list_by_category(cid, q)
+                    }
+                })),
+        );
+
+        // Authenticated endpoints.
         cfg.service(
             web::scope(path)
                 .wrap(self.middleware.clone())
@@ -606,37 +643,6 @@ impl ViewSet for PostViewSet {
                         }
                     }),
                 ),
-        );
-
-        // Public endpoints: no Identity extractor.
-        cfg.service(web::resource(path).route(web::get().to({
-            let vs = vs.clone();
-            move |q: web::Query<Filters>| vs.clone().list_public(q)
-        })));
-
-        cfg.service(
-            web::resource(format!("{path}/by-slug/{{slug}}")).route(web::get().to({
-                let vs = vs.clone();
-                move |slug: web::Path<String>| vs.clone().by_slug(slug)
-            })),
-        );
-
-        cfg.service(
-            web::resource(format!("{path}/{{id}}")).route(web::get().to({
-                let vs = vs.clone();
-                move |id: web::Path<String>| vs.clone().retrieve_public(id)
-            })),
-        );
-
-        cfg.service(
-            web::resource(format!("{path}/categories/{{category_id}}/posts")).route(web::get().to(
-                {
-                    let vs = vs.clone();
-                    move |cid: web::Path<String>, q: web::Query<Filters>| {
-                        vs.clone().list_by_category(cid, q)
-                    }
-                },
-            )),
         );
 
         // Authenticated endpoints with paths outside the main `path` prefix.
