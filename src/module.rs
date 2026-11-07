@@ -25,7 +25,8 @@ impl Module for BlogsModule {
             .await?;
 
         let outbox = Arc::new(Outbox::new(db.clone(), infra.event_stream()).await?);
-        let cache = infra.cache_factory();
+        let another_infra = infra.clone();
+        let cache = another_infra.cache_factory();
 
         let categories = DefaultViewSet(CategoryService::new(BlogRepo::new(
             db.clone(),
@@ -37,7 +38,7 @@ impl Module for BlogsModule {
         )));
         let posts = PostViewSet::new(
             PostService::new(BlogRepo::new(db.clone(), cache.clone()), outbox.clone()),
-            cache,
+            infra,
             comments,
         );
 

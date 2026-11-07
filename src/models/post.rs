@@ -360,10 +360,13 @@ pub struct PostViewSet {
 impl PostViewSet {
     pub fn new(
         service: PostService,
-        cache: impl ferrumec::CacheFactory,
+        cache: impl ferrumec::Infra,
         comments: Arc<CommentViewSet>,
     ) -> Self {
-        let middleware = Arc::new(viewset::web::SessionMiddleware::new(cache));
+        let middleware = Arc::new(viewset::web::create_session_middleware(
+            cache.database(),
+            cache.cache_factory(),
+        ));
         Self {
             service,
             middleware,

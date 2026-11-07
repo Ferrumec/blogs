@@ -7,7 +7,7 @@ license = "MIT"
 
 [dependencies]
 ferrumec = { version = "0.5", features = ["web", "pg"] }
-viewset = { version = "0.6.6", features = ["web"] }
+viewset = { version = "0.7", features = ["web"] }
 actix-web = "4"
 async-trait = "0.1"
 chrono = { version = "0.4", features = ["serde"] }
